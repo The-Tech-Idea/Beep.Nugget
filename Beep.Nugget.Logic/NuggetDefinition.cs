@@ -68,7 +68,10 @@ namespace Beep.Nugget.Logic
             IsActive = true;  // Default value
             CreatedDate = DateTime.UtcNow;  // Automatically set to current date/time
         }
-
+        /// <summary>
+        /// Gets or sets a list of dependencies required by this nugget.
+        /// </summary>
+        public List<NuggetDependency> Dependencies { get; set; }
         /// <summary>
         /// Initializes a new instance of the <see cref="NuggetDefinition"/> class with specified values.
         /// </summary>
@@ -91,6 +94,7 @@ namespace Beep.Nugget.Logic
             IsActive = isActive;
             Tags = tags ?? new List<string>();
             CreatedDate = DateTime.UtcNow;
+            Dependencies = new List<NuggetDependency>();
         }
 
         /// <summary>
@@ -112,6 +116,38 @@ namespace Beep.Nugget.Logic
                    !string.IsNullOrEmpty(Name) &&
                    !string.IsNullOrEmpty(Version) &&
                    !string.IsNullOrEmpty(Author);
+        }
+    }
+    /// <summary>
+    /// Represents a dependency of a nugget.
+    /// </summary>
+    public class NuggetDependency
+    {
+        /// <summary>
+        /// Gets or sets the unique identifier of the dependent nugget.
+        /// </summary>
+        public string NuggetName { get; set; }
+
+        /// <summary>
+        /// Gets or sets the version range of the dependency.
+        /// </summary>
+        public string VersionRange { get; set; }
+
+        /// <summary>
+        /// Indicates whether the dependency is installed.
+        /// </summary>
+        public bool Installed { get; set; }
+
+        public NuggetDependency(string nuggetName, string versionRange, bool installed)
+        {
+            NuggetName = nuggetName;
+            VersionRange = versionRange;
+            Installed = installed;
+        }
+
+        public override string ToString()
+        {
+            return $"{NuggetName} (Version: {VersionRange}, Installed: {Installed})";
         }
     }
 }

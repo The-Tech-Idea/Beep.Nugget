@@ -5,8 +5,6 @@ VisualStudioVersion = 17.10.34916.146
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Beep.Nugget.Logic", "Beep.Nugget.Logic\Beep.Nugget.Logic.csproj", "{EA113407-A92D-473C-B516-6F9AD86383C6}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Beep.Nugget.Server", "Beep.Nugget.Server\Beep.Nugget.Server.csproj", "{CF5FE773-3679-4363-81DA-75271860FF0C}"
-EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Beep.Nugget.Winform", "Beep.Nugget.Winform\Beep.Nugget.Winform.csproj", "{672786D7-D148-48DD-8692-87B251D3D7C3}"
 EndProject
 Global
@@ -19,10 +17,6 @@ Global
 		{EA113407-A92D-473C-B516-6F9AD86383C6}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{EA113407-A92D-473C-B516-6F9AD86383C6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{EA113407-A92D-473C-B516-6F9AD86383C6}.Release|Any CPU.Build.0 = Release|Any CPU
-		{CF5FE773-3679-4363-81DA-75271860FF0C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{CF5FE773-3679-4363-81DA-75271860FF0C}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{CF5FE773-3679-4363-81DA-75271860FF0C}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{CF5FE773-3679-4363-81DA-75271860FF0C}.Release|Any CPU.Build.0 = Release|Any CPU
 		{672786D7-D148-48DD-8692-87B251D3D7C3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{672786D7-D148-48DD-8692-87B251D3D7C3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{672786D7-D148-48DD-8692-87B251D3D7C3}.Release|Any CPU.ActiveCfg = Release|Any CPU
