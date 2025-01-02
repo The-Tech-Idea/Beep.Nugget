@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -9,7 +10,7 @@ namespace Beep.Nugget.Logic
     /// <summary>
     /// Represents a definition of a nugget with extended information.
     /// </summary>
-    public class NuggetDefinition
+    public class NuggetDefinition : INotifyPropertyChanged
     {
         /// <summary>
         /// Gets or sets the nugget's unique identifier.
@@ -58,7 +59,27 @@ namespace Beep.Nugget.Logic
         /// <summary>
         /// Indicates whether the nugget is installed in the runtime application.
         /// </summary>
-        public bool Installed { get; set; }
+        /// 
+        private bool installed = false;
+        public bool Installed
+        {
+            get => installed;
+            set
+            {
+                if (installed != value)
+                {
+                    installed = value;
+                    OnPropertyChanged(nameof(Installed));
+                }
+            }
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        protected void OnPropertyChanged(string propertyName)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
         /// <summary>
         /// Initializes a new instance of the <see cref="NuggetDefinition"/> class.
         /// </summary>

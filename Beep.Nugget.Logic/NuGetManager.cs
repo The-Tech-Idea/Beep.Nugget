@@ -12,6 +12,7 @@ using NuGet.Packaging.Signing;
 using NuGet.Repositories;
 using System.Collections.ObjectModel;
 using NuGet.Packaging;
+using System.Xml.Linq;
 
 namespace Beep.Nugget.Logic
 {
@@ -27,6 +28,19 @@ namespace Beep.Nugget.Logic
         private readonly PackageSource _packageSource;
         private readonly string _runtimeFramework;
         public ObservableCollection<NuggetDefinition> _definitions;
+        //private bool IsCompanyPackage(string packageId)
+        //{
+        //    return packageId.StartsWith("TheTechIdea.", StringComparison.OrdinalIgnoreCase);
+        //}
+        private async Task<bool> IsCompanyPackage(string packageId)
+        {
+            var repository = Repository.Factory.GetCoreV3(_repositoryUrl);
+            var resource = await repository.GetResourceAsync<PackageMetadataResource>();
+            var metadata = await resource.GetMetadataAsync(packageId, includePrerelease: false, includeUnlisted: false, _sourceCacheContext, _logger, CancellationToken.None);
+
+            // Check if any metadata matches the desired author
+            return metadata.Any(m => m.Authors.Contains("TheTechIdea", StringComparison.OrdinalIgnoreCase));
+        }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="NuGetManager"/> class with a specified repository URL.
@@ -127,6 +141,13 @@ namespace Beep.Nugget.Logic
         {
             try
             {
+                var retval = IsCompanyPackage(packageId);
+                retval.Wait();
+                if (!retval.Result)
+                {
+                    throw new InvalidOperationException($"Package {packageId} is not a valid company package.");
+                }
+
                 var repository = Repository.Factory.GetCoreV3(_repositoryUrl);
                 var resource = await repository.GetResourceAsync<FindPackageByIdResource>();
 
@@ -358,7 +379,7 @@ namespace Beep.Nugget.Logic
         /// Retrieves nuggets (packages) from the repository based on a search term and adds them to the local nugget definitions.
         /// </summary>
         /// <param name="searchTerm">The search term used to find packages.</param>
-        public async Task RetrieveCompanyNuggetsAsync(string searchTerm = "")
+        public async Task RetrieveCompanyNuggetsAsync(string projectpath,string searchTerm = "")
         {
             var repository = Repository.Factory.GetCoreV3(_repositoryUrl);
             var resource = await repository.GetResourceAsync<PackageSearchResource>();
@@ -368,17 +389,23 @@ namespace Beep.Nugget.Logic
 
             foreach (var package in results)
             {
-                var nuggetDefinition = new NuggetDefinition
-                {
-                    NuggetName = package.Identity.Id,
-                    Name = package.Title,
-                    Description = package.Description,
-                    Version = package.Identity.Version.ToString(),
-                    Author = package.Authors,
-                    Installed = IsPackageInstalled(package.Identity.Id, package.Identity.Version.ToString())
-                };
+                // Filter packages by author
+                var isCompanyPackage = await IsCompanyPackage(package.Identity.Id);
 
-                _definitions.Add(nuggetDefinition);
+                if (isCompanyPackage)
+                {
+                    var nuggetDefinition = new NuggetDefinition
+                    {
+                        NuggetName = package.Identity.Id,
+                        Name = package.Title,
+                        Description = package.Description,
+                        Version = package.Identity.Version.ToString(),
+                        Author = package.Authors,
+                        Installed = IsPackageInstalledinProjectAssetsJson(projectpath, package.Identity.Id, package.Identity.Version.ToString())
+                    };
+
+                    _definitions.Add(nuggetDefinition);
+                }
             }
         }
 
@@ -388,11 +415,59 @@ namespace Beep.Nugget.Logic
         /// <param name="packageId">The ID of the package to check.</param>
         /// <param name="version">The version of the package to check.</param>
         /// <returns>True if the package is installed, otherwise false.</returns>
-        private bool IsPackageInstalled(string packageId, string version)
+        public bool IsPackageInstalledInDomain(string packageId, string version)
         {
             var assemblies = AppDomain.CurrentDomain.GetAssemblies();
             return assemblies.Any(a => a.GetName().Name.Equals(packageId, StringComparison.OrdinalIgnoreCase)
                                        && a.GetName().Version.ToString() == version);
+        }
+        public bool IsPackageInstalledinPackagesConfig(string projectDir, string packageId, string version)
+        {
+            // Locate the packages.config file
+           // string projectDir = @"Path\To\Your\Project"; // Adjust dynamically for your project
+            string packagesConfigPath = Path.Combine(projectDir, "packages.config");
+
+            if (!File.Exists(packagesConfigPath))
+            {
+                throw new FileNotFoundException("The packages.config file was not found.");
+            }
+
+            // Parse the XML file
+            var doc = XDocument.Load(packagesConfigPath);
+            var package = doc.Descendants("package")
+                             .FirstOrDefault(p => p.Attribute("id")?.Value.Equals(packageId, StringComparison.OrdinalIgnoreCase) == true &&
+                                                  p.Attribute("version")?.Value == version);
+
+            return package != null;
+        }
+
+        public bool IsPackageInstalledinProjectAssetsJson(string projectDir ,string packageId, string version)
+        {
+            // Locate the project.assets.json file
+            //string projectDir = @"Path\To\Your\Project"; // Adjust dynamically for your project
+            string assetsFilePath = Path.Combine(projectDir, "obj", "project.assets.json");
+
+            if (!File.Exists(assetsFilePath))
+            {
+                throw new FileNotFoundException("The project.assets.json file was not found.");
+            }
+
+            // Parse the JSON file
+            var assetsFileContent = File.ReadAllText(assetsFilePath);
+            var assets = System.Text.Json.JsonDocument.Parse(assetsFileContent);
+
+            // Check if the package is listed in the dependencies
+            var dependencies = assets.RootElement.GetProperty("libraries");
+            foreach (var dependency in dependencies.EnumerateObject())
+            {
+                if (dependency.Name.StartsWith(packageId, StringComparison.OrdinalIgnoreCase) &&
+                    dependency.Value.GetProperty("version").GetString() == version)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -403,13 +478,21 @@ namespace Beep.Nugget.Logic
         /// <returns>The path to the downloaded package.</returns>
         private string GetPackagePath(string packageId, string version)
         {
-            string packageFolder = Path.Combine(Path.GetTempPath(), $"{packageId}.{version}.nupkg");
-            if (Directory.Exists(packageFolder))
+            // Retrieve the NuGet settings
+            var settings = NuGet.Configuration.Settings.LoadDefaultSettings(root: null);
+            var globalPackagesFolder = NuGet.Configuration.SettingsUtility.GetGlobalPackagesFolder(settings);
+
+            // Construct the package path
+            string packagePath = Path.Combine(globalPackagesFolder, packageId.ToLower(), version);
+
+            if (Directory.Exists(packagePath))
             {
-                return packageFolder;
+                return packagePath;
             }
 
-            throw new FileNotFoundException($"Package {packageId} (v{version}) not found.");
+            throw new FileNotFoundException($"Package {packageId} (v{version}) not found in the NuGet global cache.");
         }
+       
+
     }
 }
