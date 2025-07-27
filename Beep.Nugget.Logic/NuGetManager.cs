@@ -13,6 +13,7 @@ using NuGet.Repositories;
 using System.Collections.ObjectModel;
 using NuGet.Packaging;
 using System.Xml.Linq;
+using TheTechIdea.Beep.Utilities;
 
 namespace Beep.Nugget.Logic
 {
@@ -28,6 +29,8 @@ namespace Beep.Nugget.Logic
         private readonly PackageSource _packageSource;
         private readonly string _runtimeFramework;
         public ObservableCollection<NuggetDefinition> _definitions;
+        private readonly DatabaseNuggetsCatalog _databaseCatalog;
+
         //private bool IsCompanyPackage(string packageId)
         //{
         //    return packageId.StartsWith("TheTechIdea.", StringComparison.OrdinalIgnoreCase);
@@ -53,6 +56,8 @@ namespace Beep.Nugget.Logic
             _logger = NullLogger.Instance;
             _packageSource = new PackageSource(_repositoryUrl);
             _runtimeFramework = GetRuntimeFramework();
+            _definitions = new ObservableCollection<NuggetDefinition>();
+            _databaseCatalog = new DatabaseNuggetsCatalog();
         }
 
         /// <summary>
@@ -298,7 +303,28 @@ namespace Beep.Nugget.Logic
         {
             try
             {
-                string libFolderPath = Path.Combine(packagePath, "lib");
+                // Extract the package to a temporary directory
+                var extractPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+                Directory.CreateDirectory(extractPath);
+
+                // Extract the .nupkg file
+                using (var packageReader = new PackageArchiveReader(packagePath))
+                {
+                    var files = await packageReader.GetFilesAsync(CancellationToken.None);
+                    foreach (var file in files)
+                    {
+                        var destinationPath = Path.Combine(extractPath, file);
+                        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+                        
+                        using (var sourceStream = await packageReader.GetStreamAsync(file, CancellationToken.None))
+                        using (var destinationStream = File.Create(destinationPath))
+                        {
+                            await sourceStream.CopyToAsync(destinationStream);
+                        }
+                    }
+                }
+
+                string libFolderPath = Path.Combine(extractPath, "lib");
                 if (!Directory.Exists(libFolderPath))
                 {
                     throw new DirectoryNotFoundException($"The package at {packagePath} does not contain a lib folder.");
@@ -332,10 +358,21 @@ namespace Beep.Nugget.Logic
 
                 // Recursively load dependencies
                 await LoadDependencies(packagePath);
+
+                // Clean up extracted files
+                try
+                {
+                    Directory.Delete(extractPath, true);
+                }
+                catch (Exception cleanupEx)
+                {
+                    _logger.LogWarning($"Failed to clean up temporary directory {extractPath}: {cleanupEx.Message}");
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Error loading NuGet package from {packagePath}: {ex.Message}");
+                throw;
             }
         }
 
@@ -424,50 +461,67 @@ namespace Beep.Nugget.Logic
         public bool IsPackageInstalledinPackagesConfig(string projectDir, string packageId, string version)
         {
             // Locate the packages.config file
-           // string projectDir = @"Path\To\Your\Project"; // Adjust dynamically for your project
             string packagesConfigPath = Path.Combine(projectDir, "packages.config");
 
             if (!File.Exists(packagesConfigPath))
             {
-                throw new FileNotFoundException("The packages.config file was not found.");
+                return false; // Return false instead of throwing exception
             }
 
-            // Parse the XML file
-            var doc = XDocument.Load(packagesConfigPath);
-            var package = doc.Descendants("package")
-                             .FirstOrDefault(p => p.Attribute("id")?.Value.Equals(packageId, StringComparison.OrdinalIgnoreCase) == true &&
-                                                  p.Attribute("version")?.Value == version);
+            try
+            {
+                // Parse the XML file
+                var doc = XDocument.Load(packagesConfigPath);
+                var package = doc.Descendants("package")
+                                 .FirstOrDefault(p => p.Attribute("id")?.Value.Equals(packageId, StringComparison.OrdinalIgnoreCase) == true &&
+                                                      p.Attribute("version")?.Value == version);
 
-            return package != null;
+                return package != null;
+            }
+            catch (Exception)
+            {
+                // Return false if any parsing errors occur
+                return false;
+            }
         }
 
         public bool IsPackageInstalledinProjectAssetsJson(string projectDir ,string packageId, string version)
         {
             // Locate the project.assets.json file
-            //string projectDir = @"Path\To\Your\Project"; // Adjust dynamically for your project
             string assetsFilePath = Path.Combine(projectDir, "obj", "project.assets.json");
 
             if (!File.Exists(assetsFilePath))
             {
-                throw new FileNotFoundException("The project.assets.json file was not found.");
+                return false; // Return false instead of throwing exception
             }
 
-            // Parse the JSON file
-            var assetsFileContent = File.ReadAllText(assetsFilePath);
-            var assets = System.Text.Json.JsonDocument.Parse(assetsFileContent);
-
-            // Check if the package is listed in the dependencies
-            var dependencies = assets.RootElement.GetProperty("libraries");
-            foreach (var dependency in dependencies.EnumerateObject())
+            try
             {
-                if (dependency.Name.StartsWith(packageId, StringComparison.OrdinalIgnoreCase) &&
-                    dependency.Value.GetProperty("version").GetString() == version)
-                {
-                    return true;
-                }
-            }
+                // Parse the JSON file
+                var assetsFileContent = File.ReadAllText(assetsFilePath);
+                var assets = System.Text.Json.JsonDocument.Parse(assetsFileContent);
 
-            return false;
+                // Check if the package is listed in the dependencies
+                if (assets.RootElement.TryGetProperty("libraries", out var libraries))
+                {
+                    foreach (var dependency in libraries.EnumerateObject())
+                    {
+                        if (dependency.Name.StartsWith(packageId, StringComparison.OrdinalIgnoreCase) &&
+                            dependency.Value.TryGetProperty("version", out var versionProperty) &&
+                            versionProperty.GetString() == version)
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            }
+            catch (Exception)
+            {
+                // Return false if any parsing errors occur
+                return false;
+            }
         }
 
         /// <summary>
@@ -492,7 +546,176 @@ namespace Beep.Nugget.Logic
 
             throw new FileNotFoundException($"Package {packageId} (v{version}) not found in the NuGet global cache.");
         }
-       
+        /// <summary>
+        /// Removes a package from the runtime application by unloading its assemblies.
+        /// Note: .NET doesn't support true assembly unloading except in separate AppDomains or AssemblyLoadContext.
+        /// </summary>
+        /// <param name="packageId">The ID of the package to remove.</param>
+        /// <param name="version">The version of the package to remove.</param>
+        /// <returns>True if the package was marked for removal, false otherwise.</returns>
+        public bool RemovePackageFromRuntime(string packageId, string version)
+        {
+            try
+            {
+                _logger.LogWarning($"Assembly unloading is not fully supported in .NET. Package {packageId} (v{version}) will remain loaded until application restart.");
+                
+                // Find the nugget definition and mark it as not installed
+                var nugget = _definitions.FirstOrDefault(n => 
+                    n.NuggetName.Equals(packageId, StringComparison.OrdinalIgnoreCase) && 
+                    n.Version == version);
+                
+                if (nugget != null)
+                {
+                    nugget.Installed = false;
+                    _logger.LogInformation($"Marked package {packageId} (v{version}) as not installed.");
+                    return true;
+                }
+                
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error removing package {packageId} (v{version}): {ex.Message}");
+                return false;
+            }
+        }
 
+        /// <summary>
+        /// Gets all loaded assemblies that belong to company packages.
+        /// </summary>
+        /// <returns>A list of loaded company assemblies.</returns>
+        public List<Assembly> GetLoadedCompanyAssemblies()
+        {
+            var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            return assemblies.Where(a => 
+                a.GetName().Name?.StartsWith("TheTechIdea.", StringComparison.OrdinalIgnoreCase) == true)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Gets the database nuggets catalog with built-in database packages.
+        /// </summary>
+        /// <returns>The database nuggets catalog.</returns>
+        public DatabaseNuggetsCatalog GetDatabaseCatalog()
+        {
+            return _databaseCatalog;
+        }
+
+        /// <summary>
+        /// Gets all built-in database nuggets.
+        /// </summary>
+        /// <returns>A list of all built-in database nuggets.</returns>
+        public List<DatabaseNuggetDefinition> GetBuiltInDatabaseNuggets()
+        {
+            return _databaseCatalog.GetAllDatabaseNuggets().ToList();
+        }
+
+        /// <summary>
+        /// Gets database nuggets by category.
+        /// </summary>
+        /// <param name="category">The database category to filter by.</param>
+        /// <returns>A list of database nuggets in the specified category.</returns>
+        public List<DatabaseNuggetDefinition> GetDatabaseNuggetsByCategory(DatasourceCategory category)
+        {
+            return _databaseCatalog.GetDatabaseNuggetsByCategory(category);
+        }
+
+        /// <summary>
+        /// Searches database nuggets by name or description.
+        /// </summary>
+        /// <param name="searchTerm">The search term to look for.</param>
+        /// <returns>A list of matching database nuggets.</returns>
+        public List<DatabaseNuggetDefinition> SearchDatabaseNuggets(string searchTerm)
+        {
+            return _databaseCatalog.SearchDatabaseNuggets(searchTerm);
+        }
+
+        /// <summary>
+        /// Gets popular database nuggets (commonly used databases).
+        /// </summary>
+        /// <returns>A list of popular database nuggets.</returns>
+        public List<DatabaseNuggetDefinition> GetPopularDatabaseNuggets()
+        {
+            return _databaseCatalog.GetPopularDatabaseNuggets();
+        }
+
+        /// <summary>
+        /// Gets cloud database nuggets.
+        /// </summary>
+        /// <returns>A list of cloud database nuggets.</returns>
+        public List<DatabaseNuggetDefinition> GetCloudDatabaseNuggets()
+        {
+            return _databaseCatalog.GetCloudDatabaseNuggets();
+        }
+
+        /// <summary>
+        /// Gets NoSQL database nuggets.
+        /// </summary>
+        /// <returns>A list of NoSQL database nuggets.</returns>
+        public List<DatabaseNuggetDefinition> GetNoSQLDatabaseNuggets()
+        {
+            return _databaseCatalog.GetNoSQLDatabaseNuggets();
+        }
+
+        /// <summary>
+        /// Gets relational database nuggets.
+        /// </summary>
+        /// <returns>A list of relational database nuggets.</returns>
+        public List<DatabaseNuggetDefinition> GetRelationalDatabaseNuggets()
+        {
+            return _databaseCatalog.GetRelationalDatabaseNuggets();
+        }
+
+        /// <summary>
+        /// Gets connection string template for a specific database type.
+        /// </summary>
+        /// <param name="databaseType">The database type.</param>
+        /// <returns>The connection string template.</returns>
+        public string GetConnectionStringTemplate(DataSourceType databaseType)
+        {
+            return _databaseCatalog.GetConnectionStringTemplate(databaseType);
+        }
+
+        /// <summary>
+        /// Gets the default port for a specific database type.
+        /// </summary>
+        /// <param name="databaseType">The database type.</param>
+        /// <returns>The default port number.</returns>
+        public int GetDefaultPort(DataSourceType databaseType)
+        {
+            return _databaseCatalog.GetDefaultPort(databaseType);
+        }
+
+        /// <summary>
+        /// Gets required driver packages for a specific database type.
+        /// </summary>
+        /// <param name="databaseType">The database type.</param>
+        /// <returns>A list of required driver packages.</returns>
+        public List<string> GetRequiredDriverPackages(DataSourceType databaseType)
+        {
+            return _databaseCatalog.GetRequiredDriverPackages(databaseType);
+        }
+
+        /// <summary>
+        /// Merges built-in database nuggets with online company nuggets.
+        /// </summary>
+        /// <param name="includeBuiltInDatabases">Whether to include built-in database nuggets.</param>
+        /// <returns>A merged list of all nuggets.</returns>
+        public async Task<List<NuggetDefinition>> GetAllNuggetsAsync(bool includeBuiltInDatabases = true)
+        {
+            var allNuggets = new List<NuggetDefinition>();
+
+            // Add online company nuggets
+            allNuggets.AddRange(_definitions);
+
+            // Add built-in database nuggets if requested
+            if (includeBuiltInDatabases)
+            {
+                var databaseNuggets = GetBuiltInDatabaseNuggets();
+                allNuggets.AddRange(databaseNuggets.Cast<NuggetDefinition>());
+            }
+
+            return allNuggets;
+        }
     }
 }
