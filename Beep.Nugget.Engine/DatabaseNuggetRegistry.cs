@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using TheTechIdea.Beep.Utilities;
 
-namespace Beep.Nugget.Logic
+namespace Beep.Nugget.Engine
 {
     /// <summary>
     /// Contains information about a database nugget including official package name and connection details

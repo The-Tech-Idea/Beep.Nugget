@@ -13,7 +13,8 @@
     <PackageReference Include="NuGet.ProjectModel" Version="6.14.0" />
     <PackageReference Include="NuGet.Protocol" Version="6.14.0" />
     <PackageReference Include="System.Formats.Asn1" Version="9.0.7" />
-    <PackageReference Include="TheTechIdea.Beep.DataManagementModels" Version="2.0.66" />
+    <PackageReference Include="TheTechIdea.Beep.AssemblyLoader" Version="2.0.9" />
+    <PackageReference Include="TheTechIdea.Beep.DataManagementModels" Version="2.0.69" />
   </ItemGroup>
 
 </Project>

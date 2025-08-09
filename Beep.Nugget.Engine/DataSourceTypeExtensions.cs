@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using TheTechIdea.Beep.Utilities;
 
-namespace Beep.Nugget.Logic
+namespace Beep.Nugget.Engine
 {
     /// <summary>
     /// Extension methods for working with DataSourceType and the DatabaseNuggetRegistry

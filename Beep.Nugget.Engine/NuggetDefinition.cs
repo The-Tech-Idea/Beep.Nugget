@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Beep.Nugget.Logic
+namespace Beep.Nugget.Engine
 {
     /// <summary>
     /// Represents a definition of a nugget with extended information.
